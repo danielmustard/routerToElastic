@@ -1,0 +1,93 @@
+---
+## Ansible to create a new CA and then create a CSR and sign the CSR with 
+- name: Create a new CA and use it to sign a new SSL certificate with client and server authentication
+  hosts: localhost
+  vars_prompt:
+    - name: server_name
+      prompt: Enter Server name (e.g) [kib01.example.com]
+      private: false
+    - name: custom_dns
+      prompt: Enter Custom DNS Entry (e.g) [kib01]
+      private: false
+  vars:
+    output_directory: /home/dmustard/elastic-podman/ElasticConfig/Elasticsearch/certificates
+    ca_key_file: "{{ output_directory }}/ca-key.pem"
+    ca_cert_file: "{{ output_directory }}/ca-cert.pem"
+    server_key_file: "{{ output_directory }}/{{ server_name }}.key"
+    server_csr_file: "{{ output_directory }}/{{ server_name }}.csr"
+    server_cert_file: "{{ output_directory }}/{{ server_name }}-cert.pem"
+    ca_cert_file: "{{ output_directory }}/ca-cert.pem"
+
+  tasks:
+    - name: Ensure the output directory exists
+      ansible.builtin.file:
+        path: "{{ output_directory }}"
+        state: directory
+        mode: '0755'
+    
+    - name: Check if CA Key already exists
+      stat:
+        path: "{{ ca_cert_file }}"
+      register: ca_file_stat
+
+    - name: Generate the CA private key
+      community.crypto.openssl_privatekey:
+        path: "{{ ca_key_file }}"
+        size: 2048
+      when: not ca_file_stat.stat.exists
+
+## Make CSR for CA
+    - name: Make CSR for CA
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: "{{ ca_key_file }}"
+        common_name: mustard.ovh
+        basicConstraints: ["CA:TRUE"]
+        organization_name: Mustard Company
+      register: csr
+
+    - name: Create the CA certificate
+      community.crypto.x509_certificate:
+        path: "{{ ca_cert_file }}"
+        privatekey_path: "{{ ca_key_file }}"
+        csr_content: "{{ csr.csr }}"
+        provider: selfsigned
+        selfsigned_digest: sha256
+        #selfsigned_not_before: "-1d"
+        #selfsigned_not_after: "+10y"
+        #selfsigned_create_subject_key_identifier: true
+        selfsigned_version: 3
+      when: not ca_file_stat.stat.exists
+
+    - name: Generate a private key for the server
+      community.crypto.openssl_privatekey:
+        path: "{{ server_key_file }}"
+        size: 2048
+
+    - name: Generate CSR for the server with client and server authentication
+      community.crypto.openssl_csr:
+        path: "{{ server_csr_file }}"
+        privatekey_path: "{{ server_key_file }}"
+        common_name: "{{ server_name }}"
+        subject_alt_name:
+          - "DNS:{{ server_name }}"
+          - "DNS:{{ custom_dns }}"
+        key_usage:
+          - "digitalSignature"
+          - "keyEncipherment"
+        extended_key_usage:
+          - "serverAuth"
+          - "clientAuth"
+
+    - name: Sign the server CSR with our CA including client and server authentication
+      community.crypto.x509_certificate:
+        path: "{{ server_cert_file }}"
+        privatekey_path: "{{ ca_key_file }}"
+        csr_path: "{{ server_csr_file }}"
+        ownca_path: "{{ ca_cert_file }}"
+        ownca_privatekey_path: "{{ ca_key_file }}"
+        provider: ownca
+        ownca_digest: sha256
+
+    - name: Display paths to generated files
+      ansible.builtin.debug:
+        msg: "Generated files are located at: CA key ({{ ca_key_file }}), CA cert ({{ ca_cert_file }}), Server key ({{ server_key_file }}), Server CSR ({{ server_csr_file }}), and Server cert ({{ server_cert_file }})."

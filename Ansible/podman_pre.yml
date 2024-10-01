@@ -1,0 +1,21 @@
+---
+- hosts: all
+  become: yes
+  tasks:
+  - name: Install a list of packages
+    ansible.builtin.apt:
+      pkg:
+      - podman
+      - podman-compose
+  - name: Copy ElasticConfig
+    copy:
+      src: ../ElasticConfig
+      dest: /etc
+  - name: Add a line to a file if the file does not exist, without passing regexp
+    ansible.builtin.lineinfile:
+      path: /etc/sysctl.conf
+      line: vm.max_map_count = 262144
+  - name: Apply sysctl changes without reboot
+    ansible.builtin.shell:
+      cmd: sysctl -p /etc/sysctl.conf
+    

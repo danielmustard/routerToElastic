@@ -1,0 +1,125 @@
+version: "3.8"
+
+volumes:
+ certs:
+   driver: local
+ esdata01:
+   driver: local
+ kibanadata:
+   driver: local
+ logstashdata:
+   driver: local
+
+#networks:
+# default:
+#   name: elastic
+#   external: true
+
+services:
+## This is the main elastic search instance that will start first;
+## The setup instance is present for two reasons, A. We can use it to generate a new CSR when needed;
+## Its used to set the kibana_system password once the es01 instance has started, without this Kibana will fail;
+## Health of this container is dependant on a curl request to the container itself, once curl works elasticsearch is \n
+## running and healthy;
+
+############################    Elasticsearch config -- START --    ############################
+ es01:
+   image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+   labels:
+     co.elastic.logs/module: elasticsearch
+   volumes:
+     - ./certificates/:/usr/share/elasticsearch/config/certs/customCertificates
+     - esdata01:/usr/share/elasticsearch/data:rw,z
+#     - "./elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:rw"
+   ports:
+     - ${ES_PORT}:9200
+     - 9300:9300
+   environment:
+     - node.name=es01.mustard.ovh # SET
+     #- cluster.name=${CLUSTER_NAME} # SET in config file
+     - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+     - bootstrap.memory_lock=true
+     - discovery.type=single-node
+     #- "cluster.initial_master_nodes=es01.mustard.ovh,es02.mustard.ovh,es03.mustard.ovh"
+     #- "discovery.seed_hosts=es02.mustard.ovh ,es03.mustard.ovh"
+     #- network.publish_host=192.168.1.209
+     - xpack.security.enabled=true
+     - xpack.security.http.ssl.enabled=true
+     - xpack.security.http.ssl.key=${ELASTIC_CERT_KEY}
+     - xpack.security.enrollment.enabled=true
+     - xpack.security.http.ssl.certificate=${ELASTIC_CERT_CRT}
+     - xpack.security.http.ssl.certificate_authorities=${ELASTIC_CERT_CA}
+     ## Transport layer is used for node to node comms, using a self generated cert for this
+     - xpack.security.transport.ssl.enabled=true
+     - xpack.security.transport.ssl.key=${ELASTIC_CERT_KEY}
+     - xpack.security.transport.ssl.certificate=${ELASTIC_CERT_CRT}
+     - xpack.security.transport.ssl.certificate_authorities=${ELASTIC_CERT_CA}
+     - xpack.security.transport.ssl.verification_mode=certificate
+     - xpack.license.self_generated.type=${LICENSE}
+   mem_limit: ${ES_MEM_LIMIT}
+   ulimits:
+     memlock:
+       soft: -1
+       hard: -1
+   healthcheck:
+     test:
+       [
+         "CMD-SHELL",
+         "curl -s --cacert ${ELASTIC_CERT_CA} https://es01:9200 | grep -q 'missing authentication credentials'",
+       ]
+     interval: 10s
+     timeout: 10s
+     retries: 120
+
+ kib01:
+   depends_on:
+     es01:
+      condition: service_healthy
+   image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+   labels:
+     co.elastic.logs/module: kibana
+   volumes:
+     - kibanadata:/usr/share/kibana/data
+     - ./certificates/:/usr/share/kibana/config/certs/customCertificates
+     - ./kibana.yml:/usr/share/kibana/config/kibana.yml:rw
+   ports:
+     - ${KIBANA_PORT}:5601
+   environment:
+     - SERVERNAME=kib01.mustard.ovh
+     - ELASTICSEARCH_USERNAME=kibana_system
+     - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+     - XPACK_SECURITY_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+     - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+     - XPACK_REPORTING_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+   mem_limit: ${KB_MEM_LIMIT}
+   healthcheck:
+     test:
+       [
+         "CMD-SHELL",
+         "curl -s -L -I -k https://localhost:5601 | grep -q 'HTTP/1.1 302 Found'",
+       ]
+     interval: 10s
+     timeout: 10s
+     retries: 120
+ logstash01:
+   depends_on:
+     es01:
+       condition: service_healthy
+     kib01:
+       condition: service_healthy
+   image: docker.elastic.co/logstash/logstash:${STACK_VERSION}
+   labels:
+     co.elastic.logs/module: logstash
+   user: root
+   ports:
+     - "514:514/udp"
+   volumes:
+     - logstashdata:/usr/share/logstash/data
+     - ./certificates/:/usr/share/logstash/certs/customCertificates
+     - "./pipelines/pipelines.yml:/usr/share/logstash/config/pipelines.yml:ro"
+     - "./pipelines/routeringest.conf:/usr/share/logstash/pipeline/routeringest.conf:ro"
+   environment:
+     - xpack.monitoring.enabled=false
+     - ELASTIC_USER=elastic
+     - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+     - ELASTIC_HOSTS=https://es01:9200

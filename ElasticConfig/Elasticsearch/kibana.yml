@@ -1,0 +1,15 @@
+# Default Kibana configuration for docker target
+
+##Most of these settings are overwritten by the environment vars set in our docker compose
+##Only needed to make this file to set multiple locations for the CA chain, not supported by docker environment.
+
+server.host: "0.0.0.0"
+server.shutdownTimeout: "5s"
+elasticsearch.hosts: ["https://es01:9200"]
+monitoring.ui.container.elasticsearch.enabled: true
+elasticsearch.ssl.certificateAuthorities: ["/usr/share/kibana/config/certs/customCertificates/ca-cert.pem"]
+server.ssl.certificateAuthorities: [ "/usr/share/kibana/config/certs/customCertificates/ca-cert.pem" ]
+server.ssl.enabled: true
+server.ssl.certificate: "/usr/share/kibana/config/certs/customCertificates/kib01.mustard.ovh-cert.pem"
+server.ssl.key: "/usr/share/kibana/config/certs/customCertificates/kib01.mustard.ovh.key"
+server.publicBaseUrl: https://kib01.mustard.ovh
